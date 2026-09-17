@@ -39,7 +39,6 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     HTTPServer(("0.0.0.0", port), SimpleHandler).serve_forever()
 
-# အဆင့်များ သတ်မှတ်ခြင်း (WAIT_AUDIO အဆင့်အသစ် ထပ်တိုးထားသည်)
 CHOOSE_STYLE, CUSTOM_STYLE, WAIT_AUDIO, CHOOSE_SEED, CUSTOM_SEED, GET_TEXT = range(6)
 
 PRESET_STYLES = {
@@ -56,7 +55,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🎙️ News", callback_data="style_news"),
          InlineKeyboardButton("✨ Anime", callback_data="style_anime")],
         [InlineKeyboardButton("✍️ ကိုယ်ပိုင် Style စာရိုက်မည်", callback_data="style_custom")],
-        [InlineKeyboardButton("🎤 အသံဖိုင်ဖြင့် Clone လုပ်မည်", callback_data="style_clone")] # Clone ခလုတ်အသစ်
+        [InlineKeyboardButton("🎤 အသံဖိုင်ဖြင့် Clone လုပ်မည်", callback_data="style_clone")]
     ]
     await update.message.reply_text("အဆင့် (၁) - Voice Style ရွေးပါ သို့မဟုတ် Clone ရွေးပါ အစ်ကို-", reply_markup=InlineKeyboardMarkup(keyboard))
     return CHOOSE_STYLE
@@ -65,7 +64,6 @@ async def style_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     
-    # ရွေးချယ်မှုများကို ရှင်းလင်းထားခြင်း
     context.user_data["style"] = None
     context.user_data["ref_audio"] = None
 
@@ -84,22 +82,18 @@ async def custom_style_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return await ask_seed(update, context)
 
 async def handle_audio_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # အစ်ကိုပို့လိုက်သော အသံဖိုင် သို့မဟုတ် Voice Note ကို ဖမ်းယူခြင်း
     audio_obj = update.message.voice or update.message.audio
     if not audio_obj:
         await update.message.reply_text("ကျေးဇူးပြု၍ အသံဖိုင် သို့မဟုတ် Voice Note သာ ပို့ပေးပါ။")
         return WAIT_AUDIO
         
     status_msg = await update.message.reply_text("📥 အသံဖိုင်ကို လက်ခံရယူနေပါသည်...")
-    
     file = await context.bot.get_file(audio_obj.file_id)
-    # ယာယီသိမ်းဆည်းမည့် လမ်းကြောင်း
     temp_audio_path = os.path.join(tempfile.gettempdir(), f"clone_{audio_obj.file_id}.ogg")
     await file.download_to_drive(temp_audio_path)
     
     context.user_data["ref_audio"] = temp_audio_path
     await status_msg.delete()
-    
     return await ask_seed(update, context)
 
 async def ask_seed(event, context: ContextTypes.DEFAULT_TYPE):
@@ -157,26 +151,28 @@ def find_audio_file(data):
 def generate_voice(style, ref_audio, text, seed):
     c = get_client()
     last_error = ""
+    prompt_text = f"{style} ... {text}" if style else text
     
-    # Auto Endpoint Finder
+    # Auto Endpoint Finder (Parameter အမှန်ဖြင့်သာ ချိတ်ဆက်ခြင်း)
     for i in range(5):
-        try:
-            if ref_audio:
-                # Voice Clone လုပ်မည့် အခြေအနေ
-                # handle_file ကိုသုံး၍ အသံဖိုင်ကို Hugging Face သို့ ပို့ပေးခြင်း
+        if ref_audio:
+            # Voice Clone Mode အတွက် Parameter ၆ ခု ပို့ခြင်း
+            try:
                 res = c.predict(handle_file(ref_audio), "", text, 2.0, 10, int(seed), fn_index=i)
-            else:
-                # ရိုးရိုး Text to Speech အခြေအနေ
-                prompt_text = f"{style} ... {text}"
-                res = c.predict(None, "", prompt_text, 2.0, 10, int(seed), fn_index=i)
+                audio = find_audio_file(res)
+                if audio: return audio
+            except Exception as e:
+                last_error += f"\n[Tab {i} Clone]: {str(e)}"
+        else:
+            # Text Mode အတွက် Parameter ၄ ခု သီးသန့် ပို့ခြင်း
+            try:
+                res = c.predict(prompt_text, 2.0, 10, int(seed), fn_index=i)
+                audio = find_audio_file(res)
+                if audio: return audio
+            except Exception as e:
+                last_error += f"\n[Tab {i} Text]: {str(e)}"
                 
-            audio = find_audio_file(res)
-            if audio: return audio
-        except Exception as e:
-            last_error += f"\nTab {i}: {str(e)}"
-            pass 
-            
-    raise ValueError(f"AI Model ဆီမှ အသံဖိုင် ထုတ်ယူ၍မရပါ။ အသေးစိတ်: {last_error}")
+    raise ValueError(f"AI Model ဆီမှ အသံဖိုင် ထုတ်ယူ၍မရပါ။\n{last_error[:400]}")
 
 async def get_text_and_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text_to_speak = update.message.text.strip()
@@ -184,7 +180,7 @@ async def get_text_and_generate(update: Update, context: ContextTypes.DEFAULT_TY
     ref_audio = context.user_data.get("ref_audio", None)
     seed = context.user_data.get("seed", 42)
     
-    status_msg = await update.message.reply_text("🎙️ အသံထုတ်လုပ်နေပါသည် အစ်ကို (အနည်းငယ် ကြာနိုင်ပါသည်)...")
+    status_msg = await update.message.reply_text("🎙️ အသံထုတ်လုပ်နေပါသည် အစ်ကို (ခဏစောင့်ပေးပါ)...")
     try:
         loop = asyncio.get_running_loop()
         audio_path = await loop.run_in_executor(None, lambda: generate_voice(style, ref_audio, text_to_speak, seed))
@@ -206,7 +202,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_bot():
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Conversation Handler တွင် WAIT_AUDIO အဆင့်အသစ် ထည့်သွင်းထားခြင်း
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
