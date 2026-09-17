@@ -3,8 +3,9 @@ import asyncio
 import threading
 import tempfile
 import urllib.request
+import wave
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from gradio_client import Client
+from gradio_client import Client, handle_file
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -23,6 +24,16 @@ class SimpleHandler(BaseHTTPRequestHandler):
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     HTTPServer(("0.0.0.0", port), SimpleHandler).serve_forever()
+
+def create_blank_audio():
+    path = os.path.join(tempfile.gettempdir(), "blank.wav")
+    if not os.path.exists(path):
+        with wave.open(path, "w") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(16000)
+            f.writeframes(b'\x00\x00' * 16000)
+    return path
 
 def extract_audio(data):
     if not data: return None
@@ -51,13 +62,15 @@ def extract_audio(data):
 
 def get_audio_from_hf(text):
     c = Client(HF_SPACE)
+    blank_wav = create_blank_audio()
+    hf_file = handle_file(blank_wav)
+    
     prompt = f"(A warm, gentle young female voice, clear storytelling tone) ... {text}"
     
     payloads = [
-        (text,),
-        (prompt,),
-        (None, "", text, 2.0, 10, 42),
-        (None, "", prompt, 2.0, 10, 42),
+        (hf_file, prompt, text, 2.0, 10, 42),
+        (hf_file, "", prompt, 2.0, 10, 42),
+        (hf_file, "", text, 2.0, 10, 42),
         (prompt, 2.0, 10, 42),
         (text, 2.0, 10, 42)
     ]
@@ -71,7 +84,25 @@ def get_audio_from_hf(text):
             except:
                 continue
 
-    raise Exception("AI Model မှ အသံဖိုင် ပြန်လည်ထုတ်ပေးခြင်း မရှိပါ။ API Parameter လွဲမှားနေပါသည်။")
+    try:
+        for fn_idx, endp in enumerate(c.endpoints):
+            params = getattr(endp, 'parameters', [])
+            if not params: continue
+            args = []
+            for p in params:
+                t = str(getattr(p, 'type', '')).lower()
+                if 'file' in t or 'audio' in t: args.append(hf_file)
+                elif 'bool' in t: args.append(False)
+                elif 'int' in t: args.append(10)
+                elif 'float' in t: args.append(2.0)
+                else: args.append(prompt)
+            res = c.predict(*args, fn_index=fn_idx)
+            audio = extract_audio(res)
+            if audio: return audio
+    except:
+        pass
+
+    raise Exception("AI Model မှ အသံဖိုင် ပြန်လည်ထုတ်ပေးခြင်း မရှိပါ။")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("မင်္ဂလာပါ! အသံထုတ်ချင်သော စာသားကို တိုက်ရိုက် ပို့ပေးပါ။")
@@ -108,4 +139,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
