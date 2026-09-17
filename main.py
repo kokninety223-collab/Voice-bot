@@ -1,14 +1,16 @@
 import os
 import asyncio
 import threading
+import tempfile
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from gradio_client import Client
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
+from gtts import gTTS
 
-HF_SPACE = "karikatura13/my-voxcpm2-voice"
+# အစ်ကို့ရဲ့ Token အမှန်
 TOKEN = "8822502239:AAGRyjwDPm46Pl-ZGPqlE1BhM8MtjE9LXW4"
 
+# Render မအိပ်သွားစေရန် Dummy Server
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -22,46 +24,39 @@ def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     HTTPServer(("0.0.0.0", port), SimpleHandler).serve_forever()
 
-def check_hf_api():
-    try:
-        c = Client(HF_SPACE)
-        info = "✅ Space သို့ ချိတ်ဆက်မိပါပြီ။ API Rule များမှာ:\n\n"
-        for idx, endp in enumerate(c.endpoints):
-            api_name = getattr(endp, 'api_name', None)
-            if not api_name: 
-                api_name = f"Tab Number: {idx}"
-            info += f"🎯 {api_name}\n"
-            
-            params = getattr(endp, 'parameters', [])
-            if not params:
-                info += "  - (ဘာ Parameter မှ မတောင်းပါ)\n"
-            else:
-                for p in params:
-                    p_name = getattr(p, 'parameter_name', 'Unknown')
-                    p_type = getattr(p, 'type', 'Unknown')
-                    info += f"  - {p_name} : {p_type}\n"
-            info += "\n"
-        return info
-    except Exception as e:
-        return f"❌ Hugging Face Space သို့ ချိတ်ဆက်၍မရပါ။:\n\n{str(e)}"
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("မင်္ဂလာပါ! API ကို စစ်ဆေးရန် စာတစ်ကြောင်း ရိုက်ပို့ကြည့်ပါ။")
+    await update.message.reply_text("မင်္ဂလာပါ! အသံထုတ်ချင်သော မြန်မာစာသားကို တိုက်ရိုက် ပို့ပေးပါ။")
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status = await update.message.reply_text("🔍 Hugging Face ဘက်ရှိ အခြေအနေကို စစ်ဆေးနေပါသည်...")
+    text = update.message.text.strip()
+    if not text: return
+        
+    status = await update.message.reply_text("🎙️ အသံထုတ်လုပ်နေပါသည်... (ခဏစောင့်ပါ)")
+    
     try:
+        def generate_audio():
+            # Google AI ဖြင့် မြန်မာအသံ ('my') ထုတ်လုပ်ခြင်း
+            tts = gTTS(text=text, lang='my', slow=False)
+            audio_path = os.path.join(tempfile.gettempdir(), "voice.mp3")
+            tts.save(audio_path)
+            return audio_path
+
         loop = asyncio.get_running_loop()
-        api_info = await loop.run_in_executor(None, check_hf_api)
-        await status.edit_text(api_info[:4000])
+        audio_file = await loop.run_in_executor(None, generate_audio)
+        
+        with open(audio_file, 'rb') as f:
+            await update.message.reply_voice(voice=f, caption=text[:40])
+            
+        await status.delete()
     except Exception as e:
-        await status.edit_text(f"Error: {str(e)}")
+        await status.edit_text(f"Error တက်သွားပါသည်:\n{str(e)}")
 
 async def start_bot():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
+    print("Bot is running perfectly...")
     async with app:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
@@ -73,3 +68,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
