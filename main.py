@@ -11,12 +11,18 @@ client = Client(HF_SPACE)
 
 TOKEN = "8822502239:AAGTJq5g8QbcslgNz-5P89_RqZk4IC46b_I"
 
-# Render အတွက် Dummy Web Server (အမြဲနိုးနေစေရန်)
+# Render အတွက် Web Server (GET ရော HEAD ရော 200 OK ပြန်ပေးရန်)
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header("Content-type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"Bot is alive!")
+        self.wfile.write(b"Bot is active and running!")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
@@ -47,16 +53,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await status_msg.edit_text(f"Error တက်သွားပါသည်: {str(e)}")
 
-def main():
-    # Web server ကို သီးသန့် background thread ဖြင့် ဖွင့်ထားခြင်း
-    threading.Thread(target=run_web_server, daemon=True).start()
-
+async def start_bot():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    print("Bot is running...")
-    app.run_polling()
+    print("Bot polling is starting...")
+    async with app:
+        await app.start()
+        await app.updater.start_polling()
+        # Bot အမြဲ run နေစေရန်
+        while True:
+            await asyncio.sleep(3600)
+
+def main():
+    # Web server thread စတင်ခြင်း
+    threading.Thread(target=run_web_server, daemon=True).start()
+    
+    # Telegram Bot ကို asyncio loop သန့်သန့်ဖြင့် run ခြင်း
+    asyncio.run(start_bot())
 
 if __name__ == "__main__":
     main()
