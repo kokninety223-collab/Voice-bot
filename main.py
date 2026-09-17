@@ -15,7 +15,6 @@ TOKEN = "8822502239:AAGTJq5g8QbcslgNz-5P89_RqZk4IC46b_I"
 # Clone လုပ်ရန် အသံဖိုင်များကို ယာယီမှတ်သားမည့် နေရာ
 user_clone_audio = {}
 
-# Render ကို 24/7 မအိပ်သွားစေရန် Dummy Server
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -56,43 +55,42 @@ def generate_voice(text, ref_audio=None):
     c = Client(HF_SPACE)
     seed = random.randint(1, 99999)
     style = "(A warm, gentle young female voice, clear storytelling tone)"
-    errors = []
     
-    if ref_audio:
-        # Clone Mode (အသံဖိုင်ပါလျှင် Parameter ၆ ခု ပို့မည်)
-        for i in [0, 1, 2]:
+    audio_file = handle_file(ref_audio) if ref_audio else None
+    
+    # Hugging Face AI က တောင်းဆိုနိုင်သော Parameter ပုံစံ (၄) မျိုးလုံးကို ကြိုတင်ပြင်ဆင်ထားခြင်း
+    payloads = [
+        # ပုံစံ ၁: VoxCPM2 အသစ် (Parameter ၉ ခု - Text, Style, Audio, PromptBool, PromptText, CFG, Steps, Seed, Normalize)
+        (text, style, audio_file, False, "", 2.0, 10, seed, True),
+        
+        # ပုံစံ ၂: VoxCPM1.5 (Parameter ၇ ခု - Text, Audio, PromptText, CFG, Steps, Normalize, Denoise)
+        (text, audio_file, "", 2.0, 10, True, True),
+        
+        # ပုံစံ ၃: Basic Clone (Parameter ၆ ခု)
+        (text, audio_file, "", 2.0, 10, seed),
+        
+        # ပုံစံ ၄: Text-to-Speech ရိုးရိုး (Audio မပါဝင်သော Parameter)
+        (text, style, 2.0, 10, seed)
+    ]
+    
+    # AI ၏ Tab 0, 1, 2 အားလုံးကို အလိုအလျောက် စမ်းသပ်ချိတ်ဆက်ခြင်း
+    # Error တက်ပါက လျစ်လျူရှုပြီး အလုပ်လုပ်သော Tab ကို အလိုအလျောက် ရှာဖွေမည်
+    for fn_idx in range(3):
+        for payload in payloads:
             try:
-                res = c.predict(handle_file(ref_audio), "", text, 2.0, 10, seed, fn_index=i)
-                audio = extract_audio(res)
-                if audio: return audio
-            except Exception as e:
-                errors.append(f"Clone Tab {i}: {str(e).splitlines()[0]}")
-    else:
-        # Text Mode (စာသားသက်သက်ဆိုလျှင် Parameter ၅ ခု ပို့မည်)
-        for i in [1, 0, 2]:
-            try:
-                res = c.predict(style, text, 2.0, 10, seed, fn_index=i)
-                audio = extract_audio(res)
-                if audio: return audio
-            except Exception as e:
-                errors.append(f"Text Tab {i}: {str(e).splitlines()[0]}")
-                
-        # Parameter ၄ ခုတည်း လက်ခံသော Tab ဖြစ်နေခဲ့လျှင် (အပို Back-up)
-        for i in [1, 0, 2]:
-            try:
-                res = c.predict(text, 2.0, 10, seed, fn_index=i)
-                audio = extract_audio(res)
-                if audio: return audio
-            except Exception as e:
-                errors.append(f"Fallback Tab {i}: {str(e).splitlines()[0]}")
+                res = c.predict(*payload, fn_index=fn_idx)
+                audio_path = extract_audio(res)
+                if audio_path:
+                    return audio_path
+            except Exception:
+                pass
 
-    raise ValueError("AI နှင့် ချိတ်ဆက်၍ မရပါ။\n" + "\n".join(errors[:4]))
+    raise ValueError("AI Model နှင့် ချိတ်ဆက်၍မရပါ။ (API Error)")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
-        "မင်္ဂလာပါ အစ်ကို!\n"
-        "အရိုးရှင်းဆုံးနည်းနဲ့ အသုံးပြုနိုင်ပါပြီ။\n\n"
-        "💬 **ရိုးရိုးအသံထုတ်ရန်:**\nစာသားကို တိုက်ရိုက် ရိုက်ပို့လိုက်ပါ။ (အလိုအလျောက် မိန်းကလေးသံဖြင့် ဖတ်ပေးပါမည်)\n\n"
+        "မင်္ဂလာပါ အစ်ကို!\n\n"
+        "💬 **ရိုးရိုးအသံထုတ်ရန်:**\nစာသားကို တိုက်ရိုက် ရိုက်ပို့လိုက်ပါ။\n\n"
         "🎤 **အသံတု (Clone) လုပ်ရန်:**\nအသံဖိုင်/Voice Note ကို အရင်ပို့ပါ၊ ပြီးမှ စာသားကို ပို့ပါ။"
     )
     await update.message.reply_text(msg)
