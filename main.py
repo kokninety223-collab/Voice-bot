@@ -12,6 +12,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, Messa
 HF_SPACE = "karikatura13/my-voxcpm2-voice"
 TOKEN = "8822502239:AAGRyjwDPm46Pl-ZGPqlE1BhM8MtjE9LXW4"
 
+# Render မအိပ်သွားစေရန် Dummy Server
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,6 +27,7 @@ def run_web_server():
     HTTPServer(("0.0.0.0", port), SimpleHandler).serve_forever()
 
 def create_blank_audio():
+    """Gradio မှ အသံဖိုင်မဖြစ်မနေ တောင်းပါက ဖြည့်ပေးရန် ၁ စက္ကန့်စာ အသံတိတ်ဖိုင်"""
     path = os.path.join(tempfile.gettempdir(), "blank.wav")
     if not os.path.exists(path):
         with wave.open(path, "w") as f:
@@ -67,15 +69,55 @@ def get_audio_from_hf(text):
     
     prompt = f"(A warm, gentle young female voice, clear storytelling tone) ... {text}"
     
+    # 1. AI ၏ API ဖွဲ့စည်းပုံကို အလိုအလျောက်ဖတ်၍ Parameter များကို Smart ဖြည့်သွင်းခြင်း
+    try:
+        endpoints = getattr(c, 'endpoints', [])
+        for fn_idx, endp in enumerate(endpoints):
+            try:
+                params = getattr(endp, 'parameters', [])
+                if not params and isinstance(endp, dict):
+                    params = endp.get('parameters', [])
+                
+                if not params: continue
+                
+                args = []
+                for p in params:
+                    # Parameter အမျိုးအစားကို ခွဲခြမ်းစိတ်ဖြာခြင်း
+                    t = ""
+                    if isinstance(p, dict):
+                        t = str(p.get('type', '')) + str(p.get('component', ''))
+                    else:
+                        t = str(getattr(p, 'type', '')) + str(getattr(p, 'component', ''))
+                    t = t.lower()
+                    
+                    # AI က တောင်းသော အမျိုးအစားအလိုက် အတိအကျ ဖြည့်ပေးခြင်း (Error လုံးဝမတက်စေရန်)
+                    if 'file' in t or 'audio' in t: 
+                        args.append(hf_file)
+                    elif 'int' in t: 
+                        args.append(10)
+                    elif 'float' in t or 'number' in t: 
+                        args.append(2.0)
+                    elif 'bool' in t: 
+                        args.append(False)
+                    else: 
+                        args.append(prompt)
+                
+                res = c.predict(*args, fn_index=fn_idx)
+                audio = extract_audio(res)
+                if audio: return audio
+            except:
+                continue
+    except:
+        pass
+                
+    # 2. အကယ်၍ Dynamic ဖတ်၍မရပါက ကြိုတင်သတ်မှတ်ထားသော Payload များဖြင့် စမ်းသပ်ခြင်း
     payloads = [
-        (hf_file, prompt, text, 2.0, 10, 42),
         (hf_file, "", prompt, 2.0, 10, 42),
-        (hf_file, "", text, 2.0, 10, 42),
+        (hf_file, prompt, text, 2.0, 10, 42),
         (prompt, 2.0, 10, 42),
-        (text, 2.0, 10, 42)
+        (text,)
     ]
-    
-    for fn_idx in range(5):
+    for fn_idx in range(4):
         for p in payloads:
             try:
                 res = c.predict(*p, fn_index=fn_idx)
@@ -84,25 +126,7 @@ def get_audio_from_hf(text):
             except:
                 continue
 
-    try:
-        for fn_idx, endp in enumerate(c.endpoints):
-            params = getattr(endp, 'parameters', [])
-            if not params: continue
-            args = []
-            for p in params:
-                t = str(getattr(p, 'type', '')).lower()
-                if 'file' in t or 'audio' in t: args.append(hf_file)
-                elif 'bool' in t: args.append(False)
-                elif 'int' in t: args.append(10)
-                elif 'float' in t: args.append(2.0)
-                else: args.append(prompt)
-            res = c.predict(*args, fn_index=fn_idx)
-            audio = extract_audio(res)
-            if audio: return audio
-    except:
-        pass
-
-    raise Exception("AI Model မှ အသံဖိုင် ပြန်လည်ထုတ်ပေးခြင်း မရှိပါ။")
+    raise Exception("AI Model မှ အသံဖိုင် ပြန်လည်ထုတ်ပေးခြင်း မရှိပါ။ (Server Error)")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("မင်္ဂလာပါ! အသံထုတ်ချင်သော စာသားကို တိုက်ရိုက် ပို့ပေးပါ။")
@@ -128,6 +152,7 @@ async def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
+    print("Bot is running...")
     async with app:
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
@@ -139,3 +164,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
